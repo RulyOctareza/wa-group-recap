@@ -1,0 +1,88 @@
+name: wa-recap
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wa-recap-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?isi POSTGRES_PASSWORD di .env (jalankan ./setup.sh)}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U evolution -d evolution']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: wa-recap-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  evolution:
+    # Versi dikunci: update Evolution sering mengubah perilaku (LID, grup).
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: wa-recap-evolution
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      # Cuma localhost: API key = akses penuh ke WhatsApp, jangan dibuka ke internet
+      - '127.0.0.1:${EVOLUTION_PORT:-8085}:8080'
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      SERVER_URL: http://localhost:${EVOLUTION_PORT:-8085}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?isi EVOLUTION_API_KEY di .env (jalankan ./setup.sh)}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: 'false'
+      DATABASE_ENABLED: 'true'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: wa_recap
+      DATABASE_SAVE_DATA_INSTANCE: 'true'
+      # Inti alur: semua pesan masuk disimpan ke tabel "Message"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: 'true'
+      DATABASE_SAVE_MESSAGE_UPDATE: 'false'
+      DATABASE_SAVE_DATA_CONTACTS: 'false'
+      DATABASE_SAVE_DATA_CHATS: 'false'
+      DATABASE_SAVE_DATA_HISTORIC: 'false'
+      DATABASE_SAVE_DATA_LABELS: 'false'
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: wa_recap
+      CACHE_REDIS_SAVE_INSTANCES: 'false'
+      CACHE_LOCAL_ENABLED: 'false'
+      LOG_LEVEL: ERROR,WARN,INFO
+      LOG_COLOR: 'false'
+      LOG_BAILEYS: warn
+      CONFIG_SESSION_PHONE_CLIENT: Chrome
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      QRCODE_LIMIT: 10
+      LANGUAGE: en
+      DEL_INSTANCE: 'false'
+    volumes:
+      - ./data/evolution:/evolution/instances
+    # Kalau ISP me-reset koneksi TLS ke server WhatsApp (gejala: instance gagal
+    # connect / reconnect terus), pin ke IP Meta yang tembus dari jaringan itu:
+    # extra_hosts:
+    #   - 'g.whatsapp.net:157.240.15.60'
+    #   - 'chat.cdn.whatsapp.net:157.240.15.60'
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

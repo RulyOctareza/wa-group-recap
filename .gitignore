@@ -1,0 +1,11 @@
+# Rahasia & data lokal — jangan di-commit
+.env
+groups.txt
+data/
+output/
+logs/
+backup/
+
+__pycache__/
+*.pyc
+.DS_Store
