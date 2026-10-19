@@ -1,6 +1,7 @@
 # Grup yang disimpan + direkap. Satu grup per baris: jid|Nama Grup
 # Grup lain otomatis dihapus dari DB tiap menit (recap/cleanup.py).
-# Lihat daftar jid: python3 recap/groups.py   (atau --active buat urut paling ramai)
+# Lihat daftar jid: python3 recap/groups.py   (grup aktif, urut paling ramai)
+#                   python3 recap/groups.py --all   (semua grup, berat: hindari tepat setelah nautin)
 #
 # 120363000000000000@g.us|Contoh Grup Satu
 # 6281200000000-1500000000@g.us|Contoh Grup Dua

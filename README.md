@@ -86,7 +86,13 @@ Lalu:
      "Tautkan dengan nomor telepon saja" di HP → masukkan kode.
    - Cek: `python3 recap/connect.py --status` → harus `open`.
 2. **Pilih grup**: `python3 recap/groups.py` → salin baris grup yang diinginkan ke `groups.txt`.
-   Setelah beberapa hari, `python3 recap/groups.py --active` mengurutkan grup paling ramai.
+   Mode ini menampilkan grup yang **sudah ada pesannya** sejak WA ditautkan, urut paling ramai.
+   Nama diambil dari cache Evolution; yang belum ada di cache diambil dari WhatsApp satu grup
+   tiap 3 detik (`--no-fetch` = tanpa request ke WhatsApp sama sekali). Biarkan WA tertaut
+   beberapa jam dulu supaya daftarnya lengkap.
+   `--all` menarik semua grup langsung dari WhatsApp (1 request + 1 foto profil per grup);
+   **jangan dipakai 15–30 menit pertama setelah menautkan**, karena saat itu Evolution sedang
+   sinkron metadata grup dan WhatsApp membalas `rate-overlimit`.
 3. **Isi `.env`**: `RECIPIENTS`, `RECAP_API_URL`, dan kalau web di Vercel memakai
    Deployment Protection: `VERCEL_PROTECTION_BYPASS`.
 4. **Tes**: `python3 recap/export.py --date $(date +%F) --dry-run` (semua tahap jalan,
@@ -98,8 +104,8 @@ Server memakai jam lokal untuk cron. Samakan timezone dengan `TZ_NAME`:
 ### Memakai Evolution yang sudah ada
 
 Kalau server sudah menjalankan Evolution API lain, lewati stack bawaan:
-isi `EVOLUTION_URL`, `EVOLUTION_API_KEY`, `INSTANCE`, `PG_CONTAINER`, `PG_USER`, `PG_DB`
-di `.env`, lalu `./setup.sh --skip-compose`. Instance itu akan diubah ke `groupsIgnore=false`;
+isi `EVOLUTION_URL`, `EVOLUTION_API_KEY`, `INSTANCE`, `PG_CONTAINER`, `PG_USER`, `PG_DB`,
+`REDIS_CONTAINER`, `REDIS_DB`, `REDIS_PREFIX` di `.env`, lalu `./setup.sh --skip-compose`. Instance itu akan diubah ke `groupsIgnore=false`;
 pastikan aplikasi lain yang memakai instance tersebut aman menerima pesan grup.
 
 ## Konfigurasi (`.env`)
@@ -110,6 +116,7 @@ pastikan aplikasi lain yang memakai instance tersebut aman menerima pesan grup.
 | `EVOLUTION_PORT` / `EVOLUTION_URL` | `8085` | Evolution hanya di-bind ke `127.0.0.1`. |
 | `INSTANCE` | `recap` | Nama instance WhatsApp. |
 | `PG_CONTAINER`, `PG_USER`, `PG_DB` | `wa-recap-postgres`, `evolution`, `evolution` | Postgres yang di-query script. |
+| `REDIS_CONTAINER`, `REDIS_DB`, `REDIS_PREFIX` | `wa-recap-redis`, `1`, `wa_recap` | Cache Redis Evolution, dibaca `groups.py` untuk nama grup. Untuk Evolution lain: samakan dengan `CACHE_REDIS_URI` / `CACHE_REDIS_PREFIX_KEY`-nya. |
 | `TZ_NAME` | `Asia/Jakarta` | Batas hari rekap. |
 | `EXPORT_CRON` | `0 5 * * *` | Jadwal rekap (jam server). Jalankan ulang `setup.sh` setelah diubah. |
 | `RECIPIENTS` | — | Nomor penerima, `08xx`/`62xx`, pisah koma. |
@@ -144,6 +151,7 @@ docker compose pull && docker compose up -d       # setelah mengganti versi imag
 | "Gak ada pesan dari anggota lain" | Server cuma menerima pesan dari HP sendiri. Kirim pesan uji ke grup dari nomor lain; kalau tidak masuk, logout perangkat tertaut di HP lalu tautkan ulang. |
 | Instance reconnect terus / gagal connect | ISP me-reset koneksi ke IP Meta tertentu → aktifkan `extra_hosts` di `docker-compose.yml`. |
 | Ter-logout sendiri | HP utama tidak online lebih dari 14 hari. |
+| `groups.py --all` timeout, log Evolution penuh `rate-overlimit` | Normal tepat setelah menautkan / reconnect: Evolution menarik metadata tiap grup yang ada pesannya dan WhatsApp membatasi laju. Jangan di-retry terus; tunggu 15–30 menit sampai `docker logs --since 2m wa-recap-evolution 2>&1 \| grep -c rate-overlimit` jadi 0. Pakai `groups.py` tanpa `--all`. |
 | `Summary gagal: dapat halaman HTML ...` | Web kena Vercel Deployment Protection → isi `VERCEL_PROTECTION_BYPASS`. |
 | `Summary gagal: HTTP 4xx` | Format request tidak sesuai web → cocokkan `RECAP_API_MODE` / nama field ([docs/WEB_API.md](docs/WEB_API.md)). |
 | Pesan grup dari orang lain gagal didekripsi (`No session found to decrypt message`) | Bug Evolution 2.3.7 di grup ber-alamat LID ([#2755](https://github.com/evolution-foundation/evolution-api/issues/2755)). Tautkan ulang; kalau berlanjut, uji versi Evolution yang lebih baru. |
@@ -175,7 +183,7 @@ setup.sh             installer sekali jalan (idempotent)
 groups.example.txt   contoh daftar grup target
 recap/common.py      config, query DB, Evolution API
 recap/connect.py     buat instance, settings, QR / kode pairing
-recap/groups.py      daftar grup + aktivitas 7 hari
+recap/groups.py      daftar grup (cache Evolution / --all) + aktivitas 7 hari
 recap/cleanup.py     buang pesan grup non-target (cron tiap menit)
 recap/export.py      DB → txt → summary → kirim WA (cron harian)
 recap/summarize.py   klien web summary
