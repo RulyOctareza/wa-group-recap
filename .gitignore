@@ -9,3 +9,8 @@ backup/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Mode WhatsApp Web
+webjs/node_modules/
+.wwebjs_cache/
+.wwebjs_auth/

@@ -18,6 +18,20 @@ dikirim ke nomor WhatsApp tujuan.
                               └────────────────────────────────────┘
 ```
 
+## Dua mode tangkap
+
+| | **Evolution** (default) | **WhatsApp Web** (`webjs/`, eksperimental) |
+|---|---|---|
+| Cara nyambung | Evolution API (Baileys): protokol WA Web ditiru, tanpa browser | whatsapp-web.js: **WhatsApp Web asli** di Chrome headless |
+| Online | 24 jam | Hanya saat rekap (±5 menit/hari) |
+| Penyimpanan | Postgres + Redis, cleanup tiap menit | Tidak ada DB; grup non-target tidak dibaca sama sekali |
+| Server | Docker, ±190 MB RAM terus-menerus | Node ≥ 18 + Chrome, ±500 MB selama rekap saja |
+| Kelemahan | Online terus = jejak lebih besar | Rawan rusak saat WhatsApp Web update (perbarui `whatsapp-web.js`) |
+
+Keduanya tidak resmi dan sama-sama melanggar ToS WhatsApp; mode WhatsApp Web hanya
+memperkecil jejak (klien resmi, online sebentar). Tahap txt → summary → kirim WA memakai
+kode yang sama (`recap/export.py`). Setup mode WhatsApp Web: [lihat bawah](#mode-whatsapp-web).
+
 ## Cara kerja
 
 | Tahap | Komponen | Detail |
@@ -108,6 +122,38 @@ isi `EVOLUTION_URL`, `EVOLUTION_API_KEY`, `INSTANCE`, `PG_CONTAINER`, `PG_USER`,
 `REDIS_CONTAINER`, `REDIS_DB`, `REDIS_PREFIX` di `.env`, lalu `./setup.sh --skip-compose`. Instance itu akan diubah ke `groupsIgnore=false`;
 pastikan aplikasi lain yang memakai instance tersebut aman menerima pesan grup.
 
+## Mode WhatsApp Web
+
+> **Eksperimental.** Sudah diuji: instalasi, Chrome membuka WhatsApp Web, QR login, penanganan
+> stop/timeout, dan tahap txt → summary → pesan WA. **Belum** diuji dengan nomor tertaut
+> sungguhan (pengambilan pesan grup & pengiriman); uji dulu dengan `--dry-run` dan `--to`.
+
+Tanpa Docker/Postgres/Redis. Butuh Node.js ≥ 18 dan Chrome/Chromium (`apt install chromium`;
+kalau tidak ada, `setup.sh` mengunduh Chrome bawaan Puppeteer, khusus x86_64).
+
+```bash
+./setup.sh --webjs                       # npm install, login (QR), cron harian
+./setup.sh --webjs --number=08xxxxxxxx   # login pakai kode pairing
+```
+
+| Perintah | Fungsi |
+|---|---|
+| `node webjs/recap.js login [--number 08xx]` | Tautkan HP. Sesi disimpan di `WEBJS_SESSION_DIR` (default `data/webjs-session`). |
+| `node webjs/recap.js groups` | Daftar grup dari store lokal WA Web (tanpa request per grup), urut terakhir aktif. Format `groups.txt`. |
+| `node webjs/recap.js run [--date D] [--dry-run] [--no-summary] [--to 08xx]` | Rekap harian: buka Chrome → tunggu pesan tertunda masuk → ambil pesan grup target hari itu → `recap/export.py --raw` (txt + summary) → kirim lewat sesi yang sama → tutup Chrome. |
+
+Cara kerja `run`: WhatsApp menyimpan pesan untuk perangkat tertaut yang sedang offline dan
+mengirimkannya saat perangkat itu tersambung lagi. Setelah WA Web terbuka, skrip menunggu
+sampai tidak ada pesan baru selama `WEBJS_SYNC_QUIET` detik (maks `WEBJS_SYNC_MAX_WAIT`),
+lalu membaca pesan grup lewat `fetchMessages` (memuat pesan lama sampai melewati 00:00).
+`WEBJS_MAX_RUNTIME` (default 20 menit) menutup Chrome paksa kalau ada yang macet.
+
+Catatan mode ini:
+- Jalankan `run` minimal sekali sehari (cron). Perangkat tertaut yang lama tidak tersambung
+  bisa di-logout WhatsApp, dan HP utama tetap wajib online tiap 14 hari.
+- Jangan jalankan dua perintah `webjs/recap.js` bersamaan: profil Chrome-nya terkunci.
+- Kalau WhatsApp Web berubah dan skrip error: `cd webjs && npm install whatsapp-web.js@latest`.
+
 ## Konfigurasi (`.env`)
 
 | Variabel | Default | Keterangan |
@@ -152,6 +198,8 @@ docker compose pull && docker compose up -d       # setelah mengganti versi imag
 | Instance reconnect terus / gagal connect | ISP me-reset koneksi ke IP Meta tertentu → aktifkan `extra_hosts` di `docker-compose.yml`. |
 | Ter-logout sendiri | HP utama tidak online lebih dari 14 hari. |
 | `groups.py --all` timeout, log Evolution penuh `rate-overlimit` | Normal tepat setelah menautkan / reconnect: Evolution menarik metadata tiap grup yang ada pesannya dan WhatsApp membatasi laju. Jangan di-retry terus; tunggu 15–30 menit sampai `docker logs --since 2m wa-recap-evolution 2>&1 \| grep -c rate-overlimit` jadi 0. Pakai `groups.py` tanpa `--all`. |
+| WhatsApp Web: `Sesi WA belum ditautkan atau sudah logout` | Sesi hilang/di-logout dari HP → `node webjs/recap.js login`. |
+| WhatsApp Web: `melewati WEBJS_MAX_RUNTIME` / Chrome gagal start | Cek `logs/webjs.log`; pastikan tidak ada `webjs/recap.js` lain yang jalan; perbarui `whatsapp-web.js`. |
 | `Summary gagal: dapat halaman HTML ...` | Web kena Vercel Deployment Protection → isi `VERCEL_PROTECTION_BYPASS`. |
 | `Summary gagal: HTTP 4xx` | Format request tidak sesuai web → cocokkan `RECAP_API_MODE` / nama field ([docs/WEB_API.md](docs/WEB_API.md)). |
 | Pesan grup dari orang lain gagal didekripsi (`No session found to decrypt message`) | Bug Evolution 2.3.7 di grup ber-alamat LID ([#2755](https://github.com/evolution-foundation/evolution-api/issues/2755)). Tautkan ulang; kalau berlanjut, uji versi Evolution yang lebih baru. |
@@ -187,6 +235,7 @@ recap/groups.py      daftar grup (cache Evolution / --all) + aktivitas 7 hari
 recap/cleanup.py     buang pesan grup non-target (cron tiap menit)
 recap/export.py      DB → txt → summary → kirim WA (cron harian)
 recap/summarize.py   klien web summary
+webjs/recap.js       mode WhatsApp Web: login, groups, run (whatsapp-web.js)
 docs/WEB_API.md      kontrak request/response web summary
 ```
 

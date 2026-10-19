@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Rekap harian grup WhatsApp: pesan DB → txt per grup → summary web → kirim ke WA.
+"""Rekap harian grup WhatsApp: pesan grup → txt per grup → summary web → kirim ke WA.
 
-Default: rekap kemarin (00:00-24:00 di TZ_NAME), lalu kirim ke RECIPIENTS.
+Default: rekap kemarin (00:00-24:00 di TZ_NAME) dari DB Evolution, lalu kirim ke RECIPIENTS.
   recap/export.py                       # kemarin, jalur penuh
   recap/export.py --date 2026-10-18     # tanggal tertentu
   recap/export.py --dry-run             # semua tahap jalan, pesan WA cuma dicetak
   recap/export.py --no-summary          # lewati web, txt langsung dikirim
   recap/export.py --to 628xxxxxxxxxx    # override penerima (tes), boleh pisah koma
+
+Mode WhatsApp Web (webjs/recap.js) memanggil skrip ini dengan --raw (pesan hasil tangkapan
+whatsapp-web.js, ganti query DB) dan --emit (pesan WA ditulis ke JSON, dikirim oleh Node).
 """
 from __future__ import annotations
 
@@ -130,24 +133,39 @@ select coalesce(json_agg(t order by t.ts), '[]') from (
     return json.loads(out or '[]')
 
 
+def normalize(row: dict) -> dict | None:
+    """Baris DB Evolution → baris rekap {id, ts, sender, from_me, text, quoted}. None = dilewati.
+
+    Mode WhatsApp Web (webjs/recap.js) langsung menghasilkan baris rekap dengan bentuk yang sama.
+    """
+    if row['type'] in SKIP_TYPES:
+        return None
+    text = render(row['message'])
+    quoted = (row.get('ctx') or {}).get('quotedMessage')
+    return {
+        'id': row['id'],
+        'ts': row['ts'],
+        'sender': sender(row),
+        'from_me': row.get('from_me') == 'true',
+        'text': f"[{row['type']}]" if text is None else text,
+        'quoted': (render(quoted) or '...') if quoted else None,
+    }
+
+
 def build_txt(name: str, day: dt.date, tz_label: str, zone, rows: list[dict]) -> tuple[str, int, int]:
-    """(isi txt, jumlah pesan, jumlah pesan dari anggota lain)."""
+    """rows = baris rekap (lihat normalize). Hasil: (isi txt, jumlah pesan, pesan dari anggota lain)."""
     lines, seen, others = [], set(), 0
-    for row in rows:
-        if row['id'] in seen or row['type'] in SKIP_TYPES:
+    for row in sorted(rows, key=lambda r: r['ts']):
+        if row['id'] in seen:
             continue
         seen.add(row['id'])
-        others += row.get('from_me') != 'true'
-        text = render(row['message'])
-        if text is None:
-            text = f"[{row['type']}]"
+        others += not row['from_me']
         when = dt.datetime.fromtimestamp(row['ts'], zone)
-        first, *rest = text.splitlines() or ['']
-        lines.append(f'[{when:%H:%M}] {sender(row)}: {first}')
+        first, *rest = (row['text'] or '').splitlines() or ['']
+        lines.append(f"[{when:%H:%M}] {row['sender']}: {first}")
         lines.extend(f'    {extra}' for extra in rest)
-        quoted = (row.get('ctx') or {}).get('quotedMessage')
-        if quoted:
-            snippet = ' '.join((render(quoted) or '...').split())
+        if row.get('quoted'):
+            snippet = ' '.join(row['quoted'].split())
             if len(snippet) > 80:
                 snippet = snippet[:77] + '...'
             lines.append(f'    ↪ balas: "{snippet}"')
@@ -236,6 +254,9 @@ def main() -> int:
     parser.add_argument('--dry-run', action='store_true', help='jangan kirim WA, cetak pesannya')
     parser.add_argument('--no-summary', action='store_true', help='lewati web summary')
     parser.add_argument('--to', help='nomor penerima, default RECIPIENTS di .env')
+    parser.add_argument('--raw', help='JSON {jid: [baris rekap]} dari webjs/recap.js, ganti query DB')
+    parser.add_argument('--emit', help='tulis pesan WA + penerima ke JSON ini, jangan kirim')
+    parser.add_argument('--print-range', action='store_true', help='cetak {date,start,end} lalu keluar')
     args = parser.parse_args()
 
     env = load_env()
@@ -244,11 +265,19 @@ def main() -> int:
            else dt.datetime.now(zone).date() - dt.timedelta(days=1))
     start = int(dt.datetime.combine(day, dt.time(), zone).timestamp())
     end = int(dt.datetime.combine(day + dt.timedelta(days=1), dt.time(), zone).timestamp())
+    if args.print_range:
+        print(json.dumps({'date': day.isoformat(), 'start': start, 'end': end}))
+        return 0
     use_summary = summarize.enabled(env) and not args.no_summary
+    raw = json.loads(Path(args.raw).read_text(encoding='utf-8')) if args.raw else None
 
     results, others = [], 0
     for jid, name in load_groups():
-        txt, count, from_others = build_txt(name, day, tz_label, zone, fetch(env, jid, start, end))
+        if raw is not None:
+            rows = raw.get(jid, [])
+        else:
+            rows = [r for r in map(normalize, fetch(env, jid, start, end)) if r]
+        txt, count, from_others = build_txt(name, day, tz_label, zone, rows)
         others += from_others
         slug = slugify(name)
         path = ROOT / 'output' / slug / f'{slug}_{day:%Y-%m-%d}.txt'
@@ -276,6 +305,13 @@ def main() -> int:
         return 0
 
     recipients = [phone(n) for n in (args.to or env.get('RECIPIENTS', '')).split(',') if n.strip()]
+    if args.emit:
+        Path(args.emit).write_text(json.dumps({
+            'recipients': recipients,
+            'messages': [m if 'text' in m else {'doc': str(m['doc']), 'caption': m['caption']}
+                         for m in messages],
+        }, ensure_ascii=False), encoding='utf-8')
+        return 0
     if not recipients:
         log('RECIPIENTS kosong, txt tersimpan tapi gak dikirim')
         return 1

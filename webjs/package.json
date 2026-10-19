@@ -1,0 +1,12 @@
+{
+  "name": "wa-group-recap-webjs",
+  "private": true,
+  "description": "Mode WhatsApp Web (whatsapp-web.js) untuk wa-group-recap",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "qrcode-terminal": "0.12.0",
+    "whatsapp-web.js": "1.34.7"
+  }
+}
