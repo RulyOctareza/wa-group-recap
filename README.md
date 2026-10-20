@@ -127,9 +127,11 @@ pastikan aplikasi lain yang memakai instance tersebut aman menerima pesan grup.
 
 ## Mode WhatsApp Web
 
-> **Eksperimental.** Sudah diuji: instalasi, Chrome membuka WhatsApp Web, QR login, penanganan
-> stop/timeout, dan tahap txt → summary → pesan WA. **Belum** diuji dengan nomor tertaut
-> sungguhan (pengambilan pesan grup & pengiriman); uji dulu dengan `--dry-run` dan `--to`.
+> **Eksperimental.** Diuji 20 Okt 2026 dengan nomor tertaut sungguhan (WA Web 2.3000.1050912399):
+> login, daftar grup, ambil pesan (21/22 cocok dengan Evolution), kirim teks. whatsapp-web.js
+> 1.34.7 rusak di WA Web terbaru, jadi skrip menambal `MsgKey._serialized` dan mengalihkan
+> kiriman dokumen gagal jadi pesan teks. WA Web kadang nyangkut setelah login; skrip membuka
+> ulang Chrome maks 3x.
 
 Tanpa Docker/Postgres/Redis. Butuh Node.js ≥ 18 dan Chrome/Chromium (`apt install chromium`;
 kalau tidak ada, `setup.sh` mengunduh Chrome bawaan Puppeteer, khusus x86_64).

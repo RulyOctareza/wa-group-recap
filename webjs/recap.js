@@ -12,7 +12,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -98,16 +98,40 @@ async function shutdown(code, reason) {
   process.exit(code);
 }
 
+// WhatsApp Web 2.3000.104x+ me-minify MsgKey._serialized jadi $1, dan whatsapp-web.js 1.34.7
+// belum menanganinya: getChats/fetchMessages/sendMessage error "r: r" / "t: t".
+// Kembalikan lewat getter di prototype MsgKey (wwebjs/whatsapp-web.js PR #201871, issue #201862).
+// Boleh dihapus setelah versi whatsapp-web.js yang memperbaiki ini dirilis.
+async function patchWhatsAppWeb(client) {
+  return client.pupPage.evaluate(() => {
+    const proto = window.require('WAWebMsgKey')?.prototype;
+    if (!proto || Object.getOwnPropertyDescriptor(proto, '_serialized')) return false;
+    Object.defineProperty(proto, '_serialized', {
+      get() { return this.$1 || (typeof this.toString === 'function' ? this.toString() : undefined); },
+      set(value) {
+        Object.defineProperty(this, '_serialized', { value, writable: true, enumerable: true, configurable: true });
+      },
+      configurable: true,
+    });
+    return true;
+  });
+}
+
 // Resolve saat WA Web siap. Tanpa login=true, munculnya QR berarti sesi belum/gak lagi tertaut.
 function start(client, { login = false, number = null } = {}) {
   return new Promise((resolve, reject) => {
     let codeRequested = false;
-    const limit = login ? 600 : 180;
-    const timer = setTimeout(() => reject(new Error(`WA Web gak siap dalam ${limit} detik`)), limit * 1000);
-    const fail = (err) => { clearTimeout(timer); reject(err); };
+    let authedAt = null;
+    let stallTimer = null;
+    const opened = Date.now();
+    const limit = login ? 600 : 120;
+    const timer = setTimeout(() => reject(new Error(`WA Web gak siap dalam ${limit} detik (${authedAt
+      ? `macet setelah login, ${Math.round((authedAt - opened) / 1000)} detik`
+      : 'macet sebelum login/sinkron selesai'})`)), limit * 1000);
+    const fail = (err) => { clearTimeout(timer); clearTimeout(stallTimer); reject(err); };
 
     client.on('qr', async (qr) => {
-      if (!login) return fail(new Error('Sesi WA belum ditautkan atau sudah logout. Jalankan: node webjs/recap.js login'));
+      if (!login) return fail(Object.assign(new Error('Sesi WA belum ditautkan atau sudah logout. Jalankan: node webjs/recap.js login'), { noRetry: true }));
       if (!number) {
         qrcode.generate(qr, { small: true });
         console.log('Scan dari HP: WhatsApp → Perangkat tertaut → Tautkan perangkat (QR ganti tiap ~20 detik)');
@@ -123,10 +147,43 @@ function start(client, { login = false, number = null } = {}) {
         fail(err);
       }
     });
-    client.on('auth_failure', (msg) => fail(new Error(`Autentikasi gagal: ${msg}`)));
-    client.on('ready', () => { clearTimeout(timer); resolve(); });
+    // Patch sebelum whatsapp-web.js menyuntik kodenya: tanpa ini, kadang 'ready' gak pernah muncul
+    client.on('authenticated', () => {
+      authedAt = Date.now();
+      patchWhatsAppWeb(client).catch(() => {});
+      // whatsapp-web.js kadang nyangkut setelah login tanpa error (lebih sering kalau sering
+      // reconnect berturut-turut); buka ulang aja
+      if (!login) stallTimer = setTimeout(() => fail(new Error('WA Web macet setelah login (ready gak muncul 60 detik)')), 60000);
+    });
+    client.on('auth_failure', (msg) => fail(Object.assign(new Error(`Autentikasi gagal: ${msg}`), { noRetry: true })));
+    client.on('ready', async () => {
+      clearTimeout(timer);
+      clearTimeout(stallTimer);
+      try {
+        if (await patchWhatsAppWeb(client)) log('patch MsgKey._serialized dipasang');
+      } catch (err) {
+        log(`patch MsgKey gagal (${err.message}), lanjut tanpa patch`);
+      }
+      resolve();
+    });
     client.initialize().catch(fail);
   });
+}
+
+// WA Web kadang macet saat dibuka. Buka ulang Chrome (maks 3 percobaan) sebelum menyerah.
+async function openClient(env) {
+  for (let attempt = 1; ; attempt++) {
+    const client = makeClient(env);
+    try {
+      await start(client);
+      return client;
+    } catch (err) {
+      await client.destroy().catch(() => {});
+      if (err.noRetry || attempt >= 3) throw err;
+      log(`${err.message}, buka ulang WA Web (percobaan ${attempt + 1}/3)`);
+      await sleep(5000);
+    }
+  }
 }
 
 // Setelah buka, WA Web masih menerima pesan yang tertunda selama offline. Tunggu sampai
@@ -204,15 +261,17 @@ async function normalize(msgs) {
         let name = null;
         try {
           const c = await m.getContact();
-          name = c.pushname || c.name || (c.number ? `+${c.number}` : null);
+          name = c.pushname || c.name || c.verifiedName || null;
         } catch { /* kontak gak ada di store lokal */ }
-        names.set(author, name || String(author || '?').split('@')[0]);
+        const [user, server] = String(author || '?').split('@');
+        // @lid = ID internal WhatsApp, bukan nomor HP
+        names.set(author, name || (server === 'lid' ? `~${user.slice(-4)}` : `+${user}`));
       }
       sender = names.get(author);
     }
     const q = d.quotedMsg;
     rows.push({
-      id: m.id._serialized,
+      id: m.id._serialized || m.id.$1 || `${m.id.remote}_${m.id.id}`,
       ts: m.timestamp,
       sender,
       from_me: Boolean(m.fromMe),
@@ -221,6 +280,46 @@ async function normalize(msgs) {
     });
   }
   return rows;
+}
+
+// Pecah teks panjang per baris jadi beberapa pesan (WA menerima ±65 ribu karakter, tapi
+// pesan pendek lebih enak dibaca di HP)
+function chunkText(text, max = 3500) {
+  const chunks = [];
+  let cur = '';
+  for (let line of text.split('\n')) {
+    while (line.length > max) {
+      if (cur) chunks.push(cur);
+      cur = '';
+      chunks.push(line.slice(0, max));
+      line = line.slice(max);
+    }
+    if (cur && cur.length + line.length + 1 > max) {
+      chunks.push(cur);
+      cur = '';
+    }
+    cur += (cur ? '\n' : '') + line;
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+// Kirim txt sebagai dokumen; kalau gagal (whatsapp-web.js 1.34.7 + WA Web terbaru: "Data passed
+// to getter must include an id"), kirim isinya sebagai pesan teks supaya rekap tetap sampai.
+async function sendDoc(client, to, file, caption) {
+  const { MessageMedia } = require('whatsapp-web.js');
+  try {
+    await client.sendMessage(to, MessageMedia.fromFilePath(file),
+      { sendMediaAsDocument: true, caption, waitUntilMsgSent: true });
+  } catch (err) {
+    log(`kirim file ${path.basename(file)} gagal (${String(err.message).split('\n')[0]}), dikirim sebagai teks`);
+    const parts = chunkText(fs.readFileSync(file, 'utf8').trimEnd());
+    for (const [i, part] of parts.entries()) {
+      if (i) await sleep(2000);
+      const head = `📄 *${caption}*${parts.length > 1 ? ` (${i + 1}/${parts.length})` : ''}`;
+      await client.sendMessage(to, `${head}\n\n${part}`, { waitUntilMsgSent: true });
+    }
+  }
 }
 
 function python(args, opts = {}) {
@@ -245,9 +344,8 @@ async function cmdLogin(env, args) {
 async function cmdGroups(env) {
   let targets = new Set();
   try { targets = new Set(loadGroups().map(([jid]) => jid)); } catch { /* groups.txt belum ada */ }
-  const client = makeClient(env);
+  const client = await openClient(env);
   try {
-    await start(client);
     // getChats membaca store lokal WA Web: gak ada request per grup ke WhatsApp
     const chats = (await client.getChats()).filter((c) => c.isGroup);
     chats.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -265,10 +363,9 @@ async function cmdGroups(env) {
 async function cmdRun(env, args) {
   const range = JSON.parse(python(['--print-range', ...(args.date ? ['--date', args.date] : [])]));
   const groups = loadGroups();
+  const client = await openClient(env);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-recap-'));
-  const client = makeClient(env);
   try {
-    await start(client);
     log(`WA Web siap, rekap ${range.date}`);
     await waitForSync(client, env);
 
@@ -313,8 +410,7 @@ async function cmdRun(env, args) {
         if (m.text !== undefined) {
           await client.sendMessage(wid._serialized, m.text, { waitUntilMsgSent: true });
         } else {
-          await client.sendMessage(wid._serialized, MessageMedia.fromFilePath(m.doc),
-            { sendMediaAsDocument: true, caption: m.caption, waitUntilMsgSent: true });
+          await sendDoc(client, wid._serialized, m.doc, m.caption);
         }
       }
       log(`terkirim ke ${number}: ${out.messages.length} pesan`);

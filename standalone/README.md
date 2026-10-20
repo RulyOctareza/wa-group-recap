@@ -35,6 +35,12 @@ Cron harian (jam server):
 - `maxRuntimeSec` (default 20 menit) menutup Chrome paksa kalau ada yang macet.
 - Kalau WhatsApp Web berubah dan skrip error: `npm install whatsapp-web.js@latest`.
 - Tidak resmi: melanggar ToS WhatsApp. Pakai nomor khusus, jangan nomor pribadi; hindari kirim massal.
-- Sudah diuji: format txt/pesan identik dengan versi repo, klien web summary, Chrome membuka
-  WhatsApp Web, QR login, stop/timeout. **Belum** diuji dengan nomor tertaut sungguhan:
-  coba `run --dry-run` dulu.
+- **Status uji (20 Okt 2026, nomor tertaut sungguhan, WA Web 2.3000.1050912399):**
+  - `login` (QR), `groups` (146 grup, ±7 detik), `run`: 21 dari 22 pesan 19 Okt cocok dengan
+    Evolution (selisihnya 1 gambar yang dikirim sebelum perangkat ditautkan). Kirim teks ke WA OK.
+  - whatsapp-web.js 1.34.7 rusak di WA Web terbaru; skrip ini menambal sendiri:
+    `MsgKey._serialized` → `$1` (getChats/fetchMessages error `r: r`), dan kirim dokumen
+    (`Data passed to getter must include an id`) dialihkan jadi pesan teks.
+  - WA Web kadang nyangkut setelah login (`ready` gak muncul). Skrip membuka ulang Chrome
+    (maks 3x); saat diuji dengan buka-tutup berulang dalam waktu singkat kejadiannya sering,
+    untuk 1x sehari diperkirakan jarang. Pantau `wa-recap.log`.
