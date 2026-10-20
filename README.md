@@ -128,10 +128,11 @@ pastikan aplikasi lain yang memakai instance tersebut aman menerima pesan grup.
 ## Mode WhatsApp Web
 
 > **Eksperimental.** Diuji 20 Okt 2026 dengan nomor tertaut sungguhan (WA Web 2.3000.1050912399):
-> login, daftar grup, ambil pesan (21/22 cocok dengan Evolution), kirim teks. whatsapp-web.js
-> 1.34.7 rusak di WA Web terbaru, jadi skrip menambal `MsgKey._serialized` dan mengalihkan
-> kiriman dokumen gagal jadi pesan teks. WA Web kadang nyangkut setelah login; skrip membuka
-> ulang Chrome maks 3x.
+> login, daftar grup, ambil pesan (21/22 cocok dengan Evolution), kirim teks & dokumen.
+> Memakai whatsapp-web.js dari commit `main` resmi `064a3d5` (rilis 1.34.7 rusak di WA Web
+> terbaru). Skrip tetap menambal `MsgKey._serialized` dan mengalihkan dokumen yang gagal
+> terkirim jadi pesan teks. WA Web kadang nyangkut setelah login (lebih sering kalau dibuka-tutup
+> berdekatan); skrip membuka ulang Chrome maks 3x.
 
 Tanpa Docker/Postgres/Redis. Butuh Node.js ≥ 18 dan Chrome/Chromium (`apt install chromium`;
 kalau tidak ada, `setup.sh` mengunduh Chrome bawaan Puppeteer, khusus x86_64).
@@ -157,7 +158,9 @@ Catatan mode ini:
 - Jalankan `run` minimal sekali sehari (cron). Perangkat tertaut yang lama tidak tersambung
   bisa di-logout WhatsApp, dan HP utama tetap wajib online tiap 14 hari.
 - Jangan jalankan dua perintah `webjs/recap.js` bersamaan: profil Chrome-nya terkunci.
-- Kalau WhatsApp Web berubah dan skrip error: `cd webjs && npm install whatsapp-web.js@latest`.
+- Kalau WhatsApp Web berubah dan skrip error: cek rilis/commit terbaru
+  [whatsapp-web.js](https://github.com/wwebjs/whatsapp-web.js), ganti URL tarball di
+  `webjs/package.json`, lalu `cd webjs && npm install`.
 
 ## Konfigurasi (`.env`)
 

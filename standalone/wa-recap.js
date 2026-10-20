@@ -320,8 +320,9 @@ async function shutdown(code, reason) {
   process.exit(code);
 }
 
-// WhatsApp Web 2.3000.104x+ me-minify MsgKey._serialized jadi $1, dan whatsapp-web.js 1.34.7
-// belum menanganinya: getChats/fetchMessages/sendMessage error "r: r" / "t: t".
+// WhatsApp Web 2.3000.104x+ me-minify MsgKey._serialized jadi $1; rilis whatsapp-web.js 1.34.7
+// belum menanganinya: getChats/fetchMessages/sendMessage error "r: r" / "t: t". Commit main
+// yang dipakai package.json menambal sisi Node; patch sisi halaman ini dilewati kalau sudah ada.
 // Kembalikan lewat getter di prototype MsgKey (wwebjs/whatsapp-web.js PR #201871, issue #201862).
 // Boleh dihapus setelah versi whatsapp-web.js yang memperbaiki ini dirilis.
 async function patchWhatsAppWeb(client) {
@@ -525,8 +526,8 @@ function chunkText(text, max = 3500) {
   return chunks;
 }
 
-// Kirim txt sebagai dokumen; kalau gagal (whatsapp-web.js 1.34.7 + WA Web terbaru: "Data passed
-// to getter must include an id"), kirim isinya sebagai pesan teks supaya rekap tetap sampai.
+// Kirim txt sebagai dokumen; kalau gagal (mis. rilis 1.34.7 di WA Web terbaru: "Data passed to
+// getter must include an id"), kirim isinya sebagai pesan teks supaya rekap tetap sampai.
 async function sendDoc(client, to, file, caption) {
   const { MessageMedia } = require('whatsapp-web.js');
   try {
