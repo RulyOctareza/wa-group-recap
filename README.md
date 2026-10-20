@@ -4,6 +4,9 @@ Rekap harian chat grup WhatsApp yang otomatis: pesan grup terpilih ditangkap di 
 dirangkum per hari jadi file txt, dikirim ke web summary, lalu hasil summary-nya
 dikirim ke nomor WhatsApp tujuan.
 
+> **Cuma butuh skrip?** [`standalone/wa-recap.js`](standalone/) = seluruh alur dalam satu file
+> Node.js (WhatsApp Web, tanpa Docker/DB/Python).
+
 ```
  Grup WhatsApp                        Server (Docker)                               Web summary
 ┌──────────────┐  perangkat   ┌────────────────────────────────────┐   POST txt   ┌──────────────┐
@@ -236,6 +239,7 @@ recap/cleanup.py     buang pesan grup non-target (cron tiap menit)
 recap/export.py      DB → txt → summary → kirim WA (cron harian)
 recap/summarize.py   klien web summary
 webjs/recap.js       mode WhatsApp Web: login, groups, run (whatsapp-web.js)
+standalone/          versi satu skrip (wa-recap.js), tanpa Docker/DB/Python
 docs/WEB_API.md      kontrak request/response web summary
 ```
 

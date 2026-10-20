@@ -1,0 +1,12 @@
+{
+  "name": "wa-recap",
+  "private": true,
+  "description": "Rekap harian grup WhatsApp dalam satu skrip (whatsapp-web.js)",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "qrcode-terminal": "0.12.0",
+    "whatsapp-web.js": "1.34.7"
+  }
+}
