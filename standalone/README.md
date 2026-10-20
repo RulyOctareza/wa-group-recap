@@ -9,12 +9,16 @@ Format txt & pesan sama dengan versi repo utama.
 
 ```bash
 npm install                                 # Node >= 18; folder ini berisi package.json
-# isi CONFIG di bagian atas wa-recap.js (groups, recipients, api.url, ...)
-node wa-recap.js login                      # scan QR, atau: login --number 08xxxxxxxxxx
-node wa-recap.js groups                     # daftar grup → salin baris ke CONFIG.groups
-node wa-recap.js run --date 2026-10-18 --dry-run   # tes tanpa kirim
+node wa-recap.js login                      # scan QR dari HP (atau: login --number 08xxxxxxxxxx)
+node wa-recap.js pilih                      # pilih grup: muncul daftar bernomor, ketik mis. 1,3,5-7
+# isi CONFIG di bagian atas wa-recap.js: recipients (nomor penerima), api.url (web summary)
+node wa-recap.js run --dry-run              # tes rekap kemarin tanpa kirim
 node wa-recap.js run --to 08xxxxxxxxxx      # tes kirim ke satu nomor
 ```
+
+Pilihan grup disimpan di `groups.json` (bisa diubah kapan saja dengan `pilih` lagi;
+`node wa-recap.js groups` menampilkan daftar + grup yang sedang dipilih). Gak perlu edit kode
+untuk memilih grup.
 
 Cron harian (jam server):
 

@@ -14,3 +14,10 @@ __pycache__/
 webjs/node_modules/
 .wwebjs_cache/
 .wwebjs_auth/
+
+# Versi satu skrip (standalone/) kalau dijalankan di dalam clone repo
+standalone/node_modules/
+standalone/wa-session/
+standalone/output/
+standalone/groups.json
+standalone/*.log

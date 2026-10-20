@@ -8,7 +8,8 @@
  * Pasang (Node >= 18):  npm install            (pakai package.json di folder ini)
  * Pakai:
  *   node wa-recap.js login [--number 08xx]   tautkan HP sekali (QR / kode pairing)
- *   node wa-recap.js groups                  daftar grup → salin baris ke CONFIG.groups
+ *   node wa-recap.js pilih                   pilih grup yang direkap (ketik nomor, disimpan ke groups.json)
+ *   node wa-recap.js groups                  lihat daftar grup + yang sedang dipilih
  *   node wa-recap.js run [--date YYYY-MM-DD] [--dry-run] [--no-summary] [--to 08xx]
  * Cron:   0 5 * * * cd /folder/skrip && node wa-recap.js run >> wa-recap.log 2>&1
  *
@@ -17,7 +18,8 @@
 'use strict';
 
 const CONFIG = {
-  // Grup target: 'jid': 'Nama'. Lihat daftar jid: node wa-recap.js groups
+  // Grup target. Biasanya dibiarkan kosong: pilih lewat `node wa-recap.js pilih`, hasilnya
+  // disimpan di groups.json (dan dipakai menggantikan isian ini). Format manual: 'jid': 'Nama'.
   groups: {
     // '120363000000000000@g.us': 'Contoh Grup',
   },
@@ -553,23 +555,81 @@ async function cmdLogin(args) {
   await sleep(5000); // biar sesi sempat tersimpan sebelum browser ditutup
 }
 
-async function cmdGroups() {
+const GROUPS_FILE = path.join(BASE, 'groups.json');
+
+// Grup target: groups.json (hasil `pilih`) kalau ada, kalau gak CONFIG.groups
+function loadGroups() {
+  return fs.existsSync(GROUPS_FILE) ? JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8')) : CONFIG.groups;
+}
+
+// Semua grup yang diikuti, urut terakhir aktif. getChats membaca store lokal WA Web:
+// gak ada request per grup ke WhatsApp.
+async function listGroups() {
   const client = await openClient();
-  // getChats membaca store lokal WA Web: gak ada request per grup ke WhatsApp
   const chats = (await client.getChats()).filter((c) => c.isGroup);
   chats.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  for (const c of chats) {
-    const jid = c.id._serialized;
-    const last = c.timestamp ? new Date(c.timestamp * 1000).toLocaleDateString('sv-SE') : '-';
-    const size = c.participants ? c.participants.length : '?';
-    const target = CONFIG.groups[jid] ? ', TARGET' : '';
-    console.log(`    '${jid}': ${JSON.stringify(c.name || '')},  // ${size} anggota, terakhir aktif ${last}${target}`);
+  return chats.map((c) => ({
+    jid: c.id._serialized,
+    name: c.name || c.id.user,
+    size: c.participants ? c.participants.length : '?',
+    last: c.timestamp ? new Date(c.timestamp * 1000).toLocaleDateString('sv-SE') : '-',
+  }));
+}
+
+function printGroups(groups, selected) {
+  groups.forEach((g, i) => {
+    const mark = selected[g.jid] ? 'x' : ' ';
+    console.log(`${String(i + 1).padStart(4)}. [${mark}] ${g.name}  (${g.size} anggota, terakhir aktif ${g.last})`);
+  });
+}
+
+// "1,3,5-7" → [1, 3, 5, 6, 7]
+function parsePicks(answer, max) {
+  const picks = new Set();
+  for (const part of answer.split(/[,\s]+/).filter(Boolean)) {
+    const m = part.match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) throw new Error(`"${part}" bukan nomor. Contoh: 1,3,5-7`);
+    const [a, b] = [Number(m[1]), Number(m[2] || m[1])];
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) {
+      if (i < 1 || i > max) throw new Error(`nomor ${i} gak ada di daftar (1-${max})`);
+      picks.add(i);
+    }
   }
+  return [...picks].sort((x, y) => x - y);
+}
+
+function ask(question) {
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => rl.question(question, (answer) => { rl.close(); resolve(answer); }));
+}
+
+async function cmdGroups() {
+  const groups = await listGroups();
+  printGroups(groups, loadGroups());
+  console.log('\n[x] = sedang direkap. Ubah pilihan: node wa-recap.js pilih');
+}
+
+async function cmdPilih() {
+  const groups = await listGroups();
+  // Chrome gak perlu nunggu orang mengetik
+  await activeClient.destroy().catch(() => {});
+  activeClient = null;
+  printGroups(groups, loadGroups());
+  const answer = (await ask('\nKetik nomor grup yang mau direkap (mis. 1,3,5-7). Kosong = batal: ')).trim();
+  if (!answer) {
+    log('pilihan grup gak diubah');
+    return;
+  }
+  const picks = parsePicks(answer, groups.length);
+  const chosen = Object.fromEntries(picks.map((i) => [groups[i - 1].jid, groups[i - 1].name]));
+  fs.writeFileSync(GROUPS_FILE, `${JSON.stringify(chosen, null, 2)}\n`);
+  log(`${picks.length} grup disimpan ke groups.json:`);
+  for (const name of Object.values(chosen)) console.log(`  - ${name}`);
 }
 
 async function cmdRun(args) {
-  const groups = Object.entries(CONFIG.groups);
-  if (!groups.length) throw new Error('CONFIG.groups masih kosong. Lihat daftar grup: node wa-recap.js groups');
+  const groups = Object.entries(loadGroups());
+  if (!groups.length) throw new Error('Belum ada grup yang dipilih. Jalankan: node wa-recap.js pilih');
   const range = dayRange(args.date, CONFIG.timezone);
   const useSummary = Boolean(CONFIG.api.url) && !args.noSummary;
   const client = await openClient();
@@ -640,7 +700,7 @@ async function cmdRun(args) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const commands = { login: cmdLogin, groups: cmdGroups, run: cmdRun };
+  const commands = { login: cmdLogin, pilih: cmdPilih, groups: cmdGroups, run: cmdRun };
   const command = commands[args._[0]];
   if (!command) {
     const src = fs.readFileSync(__filename, 'utf8');
