@@ -8,7 +8,7 @@
  * Pasang (Node >= 18):  npm install            (pakai package.json di folder ini)
  * Pakai:
  *   node wa-recap.js login [--number 08xx]   tautkan HP sekali (QR / kode pairing)
- *   node wa-recap.js pilih                   pilih grup yang direkap (ketik nomor, disimpan ke groups.json)
+ *   node wa-recap.js pilih                   pilih grup yang direkap (checklist, disimpan ke groups.json)
  *   node wa-recap.js groups                  lihat daftar grup + yang sedang dipilih
  *   node wa-recap.js run [--date YYYY-MM-DD] [--dry-run] [--no-summary] [--to 08xx]
  * Cron:   0 5 * * * cd /folder/skrip && node wa-recap.js run >> wa-recap.log 2>&1
@@ -89,6 +89,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--no-summary') args.noSummary = true;
+    else if (a === '--nomor') args.nomor = true;
     else if (['--date', '--to', '--number'].includes(a)) args[a.slice(2)] = argv[++i];
     else args._.push(a);
   }
@@ -609,21 +610,50 @@ async function cmdGroups() {
   console.log('\n[x] = sedang direkap. Ubah pilihan: node wa-recap.js pilih');
 }
 
-async function cmdPilih() {
+// Checklist di terminal: panah pindah, spasi centang, ketik buat cari. null = batal.
+async function chooseGroupsChecklist(groups, selected) {
+  const prompts = require('prompts');
+  let cancelled = false;
+  const { picked } = await prompts({
+    type: 'autocompleteMultiselect',
+    name: 'picked',
+    message: 'Pilih grup yang mau direkap',
+    choices: groups.map((g) => ({
+      title: `${g.name}  (${g.size} anggota, aktif ${g.last})`,
+      value: g.jid,
+      selected: Boolean(selected[g.jid]),
+    })),
+    min: 1,
+    optionsPerPage: 15,
+    instructions: '\n  ↑/↓ pindah · spasi centang/lepas · ketik buat cari · Enter simpan · Esc batal\n',
+  }, { onCancel: () => { cancelled = true; return false; } });
+  // Saat dibatalkan, prompts tetap mengembalikan centangan sementara: jangan dipakai
+  return cancelled || !picked ? null : picked;
+}
+
+// Cadangan kalau bukan terminal interaktif (mis. input lewat pipe): ketik nomor
+async function chooseGroupsByNumber(groups, selected) {
+  printGroups(groups, selected);
+  const answer = (await ask('\nKetik nomor grup yang mau direkap (mis. 1,3,5-7). Kosong = batal: ')).trim();
+  return answer ? parsePicks(answer, groups.length).map((i) => groups[i - 1].jid) : null;
+}
+
+async function cmdPilih(args) {
   const groups = await listGroups();
-  // Chrome gak perlu nunggu orang mengetik
+  // Chrome gak perlu nunggu orang memilih
   await activeClient.destroy().catch(() => {});
   activeClient = null;
-  printGroups(groups, loadGroups());
-  const answer = (await ask('\nKetik nomor grup yang mau direkap (mis. 1,3,5-7). Kosong = batal: ')).trim();
-  if (!answer) {
-    log('pilihan grup gak diubah');
+  const selected = loadGroups();
+  const interactive = process.stdin.isTTY && process.stdout.isTTY && !args.nomor;
+  const jids = interactive ? await chooseGroupsChecklist(groups, selected) : await chooseGroupsByNumber(groups, selected);
+  if (!jids) {
+    log('dibatalkan, pilihan grup gak diubah');
     return;
   }
-  const picks = parsePicks(answer, groups.length);
-  const chosen = Object.fromEntries(picks.map((i) => [groups[i - 1].jid, groups[i - 1].name]));
+  const names = Object.fromEntries(groups.map((g) => [g.jid, g.name]));
+  const chosen = Object.fromEntries(jids.map((jid) => [jid, names[jid]]));
   fs.writeFileSync(GROUPS_FILE, `${JSON.stringify(chosen, null, 2)}\n`);
-  log(`${picks.length} grup disimpan ke groups.json:`);
+  log(`${jids.length} grup disimpan ke groups.json:`);
   for (const name of Object.values(chosen)) console.log(`  - ${name}`);
 }
 
@@ -719,4 +749,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { CONFIG, buildTxt, buildMessages, dayRange, splitlines, slugify, summarize };
+module.exports = { CONFIG, buildTxt, buildMessages, dayRange, splitlines, slugify, summarize, chooseGroupsChecklist };
