@@ -52,6 +52,7 @@ const CONFIG = {
     sessionDir: 'wa-session', // sesi login WA Web: jangan dibagi / di-commit
     chromePath: '', // kosong = Chrome bawaan Puppeteer; server Linux: '/usr/bin/chromium'
     headless: true,
+    loadTimeoutSec: 120, // batas WA Web termuat & tersambung; bawaan whatsapp-web.js 30 detik kependekan di Wi-Fi lambat
     syncQuietSec: 20, // setelah buka, tunggu pesan tertunda sampai sepi sekian detik
     syncMaxWaitSec: 300,
     maxRuntimeSec: 1200, // batas total satu perintah; lewat = Chrome ditutup paksa
@@ -309,7 +310,11 @@ function makeClient() {
     handleSIGHUP: false,
   };
   if (wa.chromePath) puppeteer.executablePath = wa.chromePath;
-  activeClient = new Client({ authStrategy: new LocalAuth({ dataPath: path.resolve(BASE, wa.sessionDir) }), puppeteer });
+  activeClient = new Client({
+    authStrategy: new LocalAuth({ dataPath: path.resolve(BASE, wa.sessionDir) }),
+    authTimeoutMs: wa.loadTimeoutSec * 1000,
+    puppeteer,
+  });
   return activeClient;
 }
 
@@ -392,7 +397,9 @@ function start(client, { login = false, number = null } = {}) {
       }
       resolve();
     });
-    client.initialize().catch(fail);
+    // whatsapp-web.js kadang melempar string ('auth timeout'), bukan Error
+    client.initialize().catch((err) => fail(err instanceof Error ? err
+      : new Error(`WA Web gagal dibuka (${err}); cek koneksi internet atau naikkan loadTimeoutSec`)));
   });
 }
 
@@ -744,7 +751,7 @@ async function main() {
     await command(args);
     await shutdown(0, 'selesai');
   } catch (err) {
-    await shutdown(1, `ERROR: ${err.message}`);
+    await shutdown(1, `ERROR: ${err?.message || err}`);
   }
 }
 
