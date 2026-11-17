@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/preview/hero.png" alt="wa-group-recap — ilustrasi pipeline rekap WhatsApp ke ringkasan" width="100%">
+  <img src="docs/preview/hero.svg" alt="wa-group-recap — ilustrasi pipeline rekap WhatsApp ke ringkasan" width="100%">
 </p>
 
 <h1 align="center">wa-group-recap</h1>
